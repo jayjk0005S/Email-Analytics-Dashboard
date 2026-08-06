@@ -13,9 +13,10 @@ NOTE:
 
 Then open Command Prompt and run:
 
-----------------------------------------------------------------------------------------------------------------------
+git clone "https://github.com/jayjk0005S/Email-Analytics-Dashboard.git"
 
-cd "C:\Path\To\Email-Analytics-Dashboard"
+----------------------------------------------------------------------------------------------------------------------
+cd Email-Analytics-Dashboard
 
 py -m venv .venv
 
