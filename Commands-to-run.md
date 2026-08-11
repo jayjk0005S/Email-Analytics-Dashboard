@@ -3,7 +3,12 @@
 Open Classic Outlook, sign in, and confirm that the Inbox is working. Then open Command Prompt and run:
 
 ```cmd
-( py --version If Python is missing: winget install --id Python.Python.3.12 --exact --scope user )
+
+NOTE : ( py --version If Python is missing: winget install --id Python.Python.3.12 --exact --scope user )
+Open Outlook Classic ( turm off the try new outlook button at the top right )
+
+open cmd
+
 git clone "https://github.com/jayjk0005S/Email-Analytics-Dashboard.git"
 cd /d "%USERPROFILE%\Documents\Email-Analytics-Dashboard"
 py -m venv .venv
