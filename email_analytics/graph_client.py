@@ -60,7 +60,7 @@ class GraphMailClient:
         return result["access_token"]
 
     def _selected_message_fields(self) -> str:
-        fields = "id,from,subject,receivedDateTime,hasAttachments,importance,conversationId,webLink"
+        fields = "id,from,subject,receivedDateTime,hasAttachments,isRead,importance,conversationId,webLink"
         return f"{fields},bodyPreview" if self.store_body_preview else fields
 
     def _headers(self) -> dict[str, str]:

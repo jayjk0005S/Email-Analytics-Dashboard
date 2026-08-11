@@ -44,6 +44,7 @@ def make_demo_messages(count: int = 511) -> list[dict]:
                 "receivedDateTime": received.isoformat(),
                 "bodyPreview": "Demo email record. Connect Microsoft Graph to view your actual Inbox data.",
                 "hasAttachments": randomizer.random() < 0.18,
+                "isRead": randomizer.random() < 0.72,
                 "importance": randomizer.choices(["low", "normal", "high"], weights=[1, 15, 2])[0],
                 "conversationId": f"demo-conversation-{index // 2}",
                 "webLink": None,

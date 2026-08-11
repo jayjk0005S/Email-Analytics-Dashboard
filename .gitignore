@@ -1,6 +1,9 @@
 .venv/
 .env
 data/
+design-concepts/
+to run.txt
+commands to run this file in another system.txt
 __pycache__/
 .pytest_cache/
 *.py[cod]

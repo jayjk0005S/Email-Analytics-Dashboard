@@ -16,7 +16,12 @@ import pywintypes
 
 from .config import get_settings
 from .database import initialize_database, upsert_emails
-from .outlook_desktop import inbox_folder, outlook_item_to_message, sync_outlook_inbox
+from .outlook_desktop import (
+    inbox_folder,
+    outlook_item_to_message,
+    refresh_outlook_read_statuses,
+    sync_outlook_inbox,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -69,17 +74,25 @@ def release_listener_slot() -> None:
 
 
 class InboxEvents:
-    """Receives classic Outlook's immediate ItemAdd event for new Inbox mail."""
+    """Receives classic Outlook events for new and changed Inbox mail."""
 
-    def OnItemAdd(self, item) -> None:  # noqa: N802 - Outlook COM event name
+    @staticmethod
+    def _store_item(item, event_name: str) -> None:
         settings = get_settings()
         try:
             message = outlook_item_to_message(item, settings.store_body_preview)
             if message:
                 stored = upsert_emails(settings.database_path, [message])
-                logger.info("New Outlook email stored (%s row affected).", stored)
+                logger.info("Outlook email %s stored (%s row affected).", event_name, stored)
         except Exception:
-            logger.exception("Could not save a new Outlook Inbox item. The next catch-up sync will retry it.")
+            logger.exception("Could not save an Outlook Inbox item after %s.", event_name)
+
+    def OnItemAdd(self, item) -> None:  # noqa: N802 - Outlook COM event name
+        self._store_item(item, "addition")
+
+    def OnItemChange(self, item) -> None:  # noqa: N802 - Outlook COM event name
+        # Outlook raises this when a message becomes read or unread.
+        self._store_item(item, "change")
 
 
 def listen_forever() -> None:
@@ -91,9 +104,18 @@ def listen_forever() -> None:
         # Keep this COM event object alive for the entire process lifetime.
         events = win32com.client.WithEvents(inbox.Items, InboxEvents)
         logger.info("Listening for new classic Outlook Inbox emails.")
+        next_read_status_refresh = time.monotonic() + 2
         while True:
             pythoncom.PumpWaitingMessages()
             _ = events
+            if time.monotonic() >= next_read_status_refresh:
+                try:
+                    changed = refresh_outlook_read_statuses()
+                    if changed:
+                        logger.info("Refreshed %s Outlook read status row(s).", changed)
+                except Exception:
+                    logger.exception("Could not reconcile Outlook read statuses.")
+                next_read_status_refresh = time.monotonic() + 15
             time.sleep(0.2)
     finally:
         pythoncom.CoUninitialize()

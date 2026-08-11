@@ -11,6 +11,8 @@ import streamlit as st
 
 from email_analytics.config import PROJECT_ROOT, get_settings
 from email_analytics.database import count_emails, get_dashboard_data, get_date_bounds, get_senders, get_state, initialize_database
+from email_analytics.date_filters import parse_requested_date_range
+from email_analytics.outlook_desktop import OutlookDesktopError, display_outlook_item
 from email_analytics.refresh_signal import read_refresh_signal
 
 
@@ -38,8 +40,8 @@ st.markdown(
       .block-container, .stMainBlockContainer, [data-testid="stMainBlockContainer"], section[data-testid="stMain"] .block-container {{ box-sizing: border-box; width: 96% !important; max-width: 96% !important; margin-left: auto !important; margin-right: auto !important; padding-top: 1.6rem; padding-bottom: 2rem; }}
       .hero-title {{ font-size: 2.15rem; font-weight: 800; letter-spacing: -.04em; line-height: 1.15; color: {TEXT_PRIMARY}; text-shadow: 0 0 18px rgba(34, 211, 238, .22); margin: 0; }}
       .hero-copy {{ color: {TEXT_MUTED}; font-size: 1.05rem; line-height: 1.45; margin: .25rem 0 0; }}
-      .zeta-logo-plate {{ background: #F7FAFF; border: 1px solid {BORDER_COLOR}; border-radius: 10px; box-shadow: 0 6px 18px rgba(0, 0, 0, .22); display: inline-flex; align-items: center; min-height: 42px; padding: .3rem .5rem; }}
-      .zeta-logo-plate img {{ display: block; width: 94px; height: auto; }}
+      .zeta-logo-plate {{ background: #EAF3FF; border: 1px solid {BORDER_COLOR}; border-radius: 9px; box-shadow: 0 6px 18px rgba(0, 0, 0, .22); display: inline-flex; align-items: center; justify-content: center; min-width: 108px; min-height: 46px; padding: .35rem .55rem; box-sizing: border-box; transform: translateY(-5px); }}
+      .zeta-logo-plate img {{ display: block; width: 88px; height: auto; }}
       .status-ribbon {{ background: {CARD_BACKGROUND}; border: 1px solid {BORDER_COLOR}; border-radius: 12px; padding: .8rem 1rem; margin: .9rem 0 1.2rem; box-shadow: 0 6px 18px rgba(0, 0, 0, .24); display: flex; align-items: center; flex-wrap: wrap; gap: .45rem 1.25rem; font-size: .95rem; line-height: 1.4; color: {TEXT_MUTED}; }}
       .status-dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .38rem; }}
       .status-item {{ white-space: nowrap; }}
@@ -74,6 +76,55 @@ st.markdown(
       [data-testid="stDateInput"] div[data-baseweb="input"]:focus-within {{ border-color: {BORDER_FOCUS} !important; box-shadow: 0 0 0 2px rgba(34, 211, 238, .16) !important; }}
       [data-testid="stSelectbox"] input, [data-testid="stSelectbox"] [role="combobox"], [data-testid="stDateInput"] input {{ color: {TEXT_PRIMARY} !important; font-size: 1.05rem !important; line-height: 1.35 !important; }}
       [data-baseweb="select"] svg {{ fill: {CYAN}; }}
+      /* Streamlit renders filter menus and calendars in a body-level portal. Keep
+         those popups aligned with the dashboard instead of inheriting the black theme. */
+      [data-baseweb="popover"] [role="listbox"],
+      [data-baseweb="popover"] [role="listbox"] > div,
+      [data-baseweb="popover"] [data-baseweb="menu"],
+      [data-testid="stSelectboxVirtualDropdown"],
+      [data-testid="stSelectboxVirtualDropdown"] [role="listbox"],
+      [data-baseweb="calendar"],
+      [data-testid="stPopoverBody"] {{
+        background: #FFFFFF !important;
+        border-color: #C7D2FE !important;
+        color: #172554 !important;
+      }}
+      [data-baseweb="popover"]:has([role="listbox"]) > div,
+      [data-baseweb="popover"]:has([data-baseweb="calendar"]) > div {{
+        background: #FFFFFF !important;
+        border: 1px solid #C7D2FE !important;
+        border-radius: 10px !important;
+        box-shadow: 0 14px 34px rgba(49, 46, 129, .18) !important;
+        overflow: hidden !important;
+      }}
+      [data-testid="stSelectboxVirtualDropdown"] {{
+        border: 1px solid #C7D2FE !important;
+        border-radius: 10px !important;
+        box-shadow: 0 14px 34px rgba(49, 46, 129, .18) !important;
+        overflow: hidden !important;
+      }}
+      [data-baseweb="popover"] [role="option"],
+      [data-baseweb="popover"] [role="option"] *,
+      [data-testid="stSelectboxVirtualDropdown"] [role="option"],
+      [data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
+      [data-baseweb="calendar"] * {{ color: #172554 !important; }}
+      [data-baseweb="popover"] [role="option"],
+      [data-testid="stSelectboxVirtualDropdown"] [role="option"] {{ background: #FFFFFF !important; }}
+      [data-baseweb="popover"] [role="option"]:hover,
+      [data-baseweb="popover"] [role="option"][aria-selected="true"],
+      [data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+      [data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"] {{
+        background: #EEF2FF !important;
+        color: #312E81 !important;
+      }}
+      [data-baseweb="calendar"] button:hover {{ background: #EEF2FF !important; }}
+      [data-baseweb="calendar"] [aria-selected="true"],
+      [data-baseweb="calendar"] [aria-selected="true"] * {{
+        background: #4F46E5 !important;
+        color: #FFFFFF !important;
+      }}
+      [data-baseweb="calendar"] [aria-disabled="true"],
+      [data-baseweb="calendar"] [aria-disabled="true"] * {{ color: #94A3B8 !important; }}
       .stButton > button {{ background: {CARD_BACKGROUND}; border: 1px solid {BORDER_COLOR}; color: {TEXT_PRIMARY}; border-radius: 9px; font-size: 1rem; min-height: 39px; box-shadow: none; }}
       .stButton > button:hover {{ background: #123353; border-color: {BORDER_FOCUS}; color: white; }}
       [data-testid="stCaptionContainer"], .stCaption {{ color: {TEXT_MUTED}; font-size: .95rem; }}
@@ -99,11 +150,41 @@ def apply_chart_theme(chart) -> None:
     chart.update_layout(
         paper_bgcolor=CARD_BACKGROUND,
         plot_bgcolor=CARD_BACKGROUND,
-        font=dict(color=TEXT_PRIMARY, family="Inter, Segoe UI, sans-serif", size=15),
+        font=dict(color=TEXT_PRIMARY, family="Segoe UI, Arial, sans-serif", size=15),
         hoverlabel=dict(bgcolor="#172940", font_color=TEXT_PRIMARY, font_size=14),
     )
-    chart.update_xaxes(color=TEXT_PRIMARY, gridcolor=GRID, zerolinecolor=GRID, title_font_size=15, tickfont_size=14)
-    chart.update_yaxes(color=TEXT_PRIMARY, gridcolor=GRID, zerolinecolor=GRID, title_font_size=15, tickfont_size=14)
+    chart.update_xaxes(
+        color=TEXT_PRIMARY,
+        gridcolor=GRID,
+        zerolinecolor=GRID,
+        tickfont=dict(color="#FFFFFF", family="Segoe UI Semibold, Arial, sans-serif", size=15),
+        title_font=dict(color="#FFFFFF", family="Segoe UI Semibold, Arial, sans-serif", size=17),
+        title_standoff=18,
+        ticklabelstandoff=9,
+        ticks="outside",
+        ticklen=6,
+        tickwidth=1.5,
+        tickcolor="#9FB5D1",
+        showline=True,
+        linecolor="#6E87A8",
+        automargin=True,
+    )
+    chart.update_yaxes(
+        color=TEXT_PRIMARY,
+        gridcolor=GRID,
+        zerolinecolor=GRID,
+        tickfont=dict(color="#FFFFFF", family="Segoe UI Semibold, Arial, sans-serif", size=15),
+        title_font=dict(color="#FFFFFF", family="Segoe UI Semibold, Arial, sans-serif", size=17),
+        title_standoff=18,
+        ticklabelstandoff=9,
+        ticks="outside",
+        ticklen=6,
+        tickwidth=1.5,
+        tickcolor="#9FB5D1",
+        showline=True,
+        linecolor="#6E87A8",
+        automargin=True,
+    )
 
 
 @st.fragment(run_every=1)
@@ -137,7 +218,9 @@ def render_dashboard() -> None:
     mail_source = getattr(settings, "mail_source", "outlook_desktop")
     initialize_database(settings.database_path)
     total_in_database = count_emails(settings.database_path)
-    logo_column, title_column, refresh_column = st.columns([0.75, 6.0, 1], vertical_alignment="center")
+    logo_column, title_column, refresh_column, next_column = st.columns(
+        [1.05, 4.45, 1, 1.45], vertical_alignment="center"
+    )
     with logo_column:
         st.markdown(
             f'<div class="zeta-logo-plate"><img src="data:image/svg+xml;base64,{ZETA_LOGO_BASE64}" alt="Zeta Global"></div>',
@@ -146,24 +229,26 @@ def render_dashboard() -> None:
     with title_column:
         st.markdown(
             '<h1 class="hero-title">Email Analytics Dashboard</h1>'
-            '<p class="hero-copy">Track Inbox volume, sender activity, and engagement over time.</p>',
+            '<p class="hero-copy">Dashboard 2 of 2 · Track Inbox volume, sender activity, and engagement over time.</p>',
             unsafe_allow_html=True,
         )
     with refresh_column:
         if st.button("Refresh now", width="stretch"):
             st.rerun()
+    with next_column:
+        if st.button("Next dashboard", icon=":material/arrow_forward:", width="stretch", key="overview_next"):
+            st.query_params.clear()
+            st.rerun()
     last_sync = get_state(settings.database_path, "last_successful_sync_at")
-    subscription_expires = get_state(settings.database_path, "graph_subscription_expires_at")
-    connection_state = "Classic Outlook Desktop" if mail_source == "outlook_desktop" else ("Microsoft Graph configured" if settings.client_id else "Graph not configured")
+    connection_state = "Classic Outlook Desktop"
     privacy_state = "Body previews stored" if settings.store_body_preview else "Metadata-only storage"
-    connection_color = "#17a36b" if mail_source == "outlook_desktop" or settings.client_id else "#a35f00"
+    connection_color = "#17a36b" if mail_source == "outlook_desktop" else "#a35f00"
     st.markdown(
         '<div class="status-ribbon">'
         f'<span class="status-item"><span class="status-dot" style="background:{connection_color}"></span>{connection_state}</span>'
         f'<span class="status-item"><span class="status-dot" style="background:#8f00ff"></span>{privacy_state}</span>'
         '<span class="status-item"><span class="status-dot" style="background:#2384d6"></span>Email-triggered refresh · 5 min backup</span>'
         f'<span class="status-item">Last sync: {last_sync or "not connected"}</span>'
-        f'<span class="status-item">Webhook: {subscription_expires or "not created"}</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -182,17 +267,59 @@ def render_dashboard() -> None:
     today = date.today()
     default_start = today - timedelta(days=1)
     default_end = today
-    selectable_start = min(bounds[0], default_start)
-    selectable_end = max(bounds[1], default_end)
+    requested_dates = parse_requested_date_range(
+        st.query_params.get("rio_start"),
+        st.query_params.get("rio_end"),
+    )
+    selectable_start = min(bounds[0], default_start, *(requested_dates or ()))
+    selectable_end = max(bounds[1], default_end, *(requested_dates or ()))
+    if requested_dates:
+        request_signature = (
+            requested_dates,
+            str(st.query_params.get("rio_date_token") or ""),
+        )
+        if st.session_state.get("overview_rio_date_signature") != request_signature:
+            st.session_state["overview_date_range"] = requested_dates
+            st.session_state["overview_rio_date_signature"] = request_signature
+    selected_dates = st.session_state.get(
+        "overview_date_range",
+        (default_start, default_end),
+    )
+    start_date: date | None = None
+    end_date: date | None = None
+    if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+        start_date, end_date = selected_dates
+    elif isinstance(selected_dates, date):
+        start_date = end_date = selected_dates
+
+    sender_options = [
+        "All senders",
+        *get_senders(settings.database_path, start_date, end_date),
+    ]
+    if st.session_state.get("overview_sender_filter") not in sender_options:
+        st.session_state.overview_sender_filter = "All senders"
+
     filter_left, filter_center, filter_right = st.columns([1.85, 0.7, 1.85], vertical_alignment="bottom")
     with filter_left:
         st.markdown('<div class="filter-heading"><strong>From</strong></div>', unsafe_allow_html=True)
-        selected_sender = st.selectbox("From", ["All senders", *get_senders(settings.database_path)], label_visibility="collapsed")
+        selected_sender = st.selectbox(
+            "From",
+            sender_options,
+            key="overview_sender_filter",
+            label_visibility="collapsed",
+        )
     with filter_center:
         total_metric = st.empty()
     with filter_right:
         st.markdown('<div class="filter-heading"><strong>Date range</strong></div>', unsafe_allow_html=True)
-        selected_dates = st.date_input("Date range", value=(default_start, default_end), min_value=selectable_start, max_value=selectable_end, label_visibility="collapsed")
+        selected_dates = st.date_input(
+            "Date range",
+            value=(default_start, default_end),
+            min_value=selectable_start,
+            max_value=selectable_end,
+            key="overview_date_range",
+            label_visibility="collapsed",
+        )
 
     start_date: date | None = None
     end_date: date | None = None
@@ -211,6 +338,12 @@ def render_dashboard() -> None:
         return
 
     frame = pd.DataFrame(records)
+    # Streamlit can hot-reload this file while retaining an older imported
+    # database module. Keep the table renderable until the process restarts
+    # and begins returning the new Outlook action identifier columns.
+    for action_column in ("outlook_entry_id", "outlook_store_id"):
+        if action_column not in frame.columns:
+            frame[action_column] = None
     frame["received_at"] = pd.to_datetime(frame["received_at"], utc=True, errors="coerce")
     frame["sender"] = frame["sender_name"].where(frame["sender_name"].str.len() > 0, frame["sender_email"])
     frame["date"] = frame["received_at"].dt.date
@@ -222,22 +355,74 @@ def render_dashboard() -> None:
         with st.container(border=True):
             section_heading("Emails by Sender", "Breakdown of emails received per sender")
             sender_counts = frame.groupby("sender", as_index=False).size().sort_values("size", ascending=False).head(15)
-            chart = px.bar(sender_counts, x="sender", y="size", color_discrete_sequence=[PURPLE])
-            chart.update_layout(height=325, margin=dict(l=8, r=8, t=4, b=70), showlegend=False, xaxis_title="Senders", yaxis_title="Count of emails")
+            chart = px.bar(sender_counts, x="sender", y="size", text="size", color_discrete_sequence=[PURPLE])
+            chart.update_layout(height=400, margin=dict(l=100, r=35, t=25, b=130), showlegend=False, xaxis_title="Sender", yaxis_title="Email count")
             apply_chart_theme(chart)
-            chart.update_xaxes(tickangle=-55, showgrid=False)
+            chart.update_traces(texttemplate="%{text:,.0f}", textposition="outside", textfont=dict(color="#FFFFFF", size=15), cliponaxis=False)
+            chart.update_xaxes(tickangle=-35, showgrid=False)
+            chart.update_yaxes(tickformat=",d", nticks=6)
             st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
     with right:
         with st.container(border=True):
-            section_heading("Email Details", "Latest records with subject and received time")
+            section_heading(
+                "Email Details",
+                "All emails matching the selected sender and calendar dates",
+            )
             details = frame[["sender_email", "received_at", "subject", "has_attachments", "importance"]].copy()
             details["received_at"] = details["received_at"].dt.tz_convert("Asia/Kolkata").dt.strftime("%d %b %Y, %I:%M %p")
             details["has_attachments"] = details["has_attachments"].map({1: "Yes", 0: "No"})
             details.columns = ["From", "Received time", "Subject", "Attachments", "Importance"]
-            styled_details = details.head(12).style.set_properties(**{"font-size": "14px"}).set_table_styles(
+            visible_details = details.reset_index(drop=True)
+            action_details = frame[
+                ["sender_email", "subject", "outlook_entry_id", "outlook_store_id"]
+            ].reset_index(drop=True)
+            st.caption(f"{len(visible_details):,} matching email(s) · Select one row for Outlook actions")
+            styled_details = visible_details.style.set_properties(**{"font-size": "14px"}).set_table_styles(
                 [{"selector": "th", "props": [("font-size", "14px"), ("font-weight", "700")]}]
             )
-            st.dataframe(styled_details, width="stretch", hide_index=True, height=325, row_height=31)
+            selection = st.dataframe(
+                styled_details,
+                width="stretch",
+                hide_index=True,
+                height=255,
+                row_height=31,
+                key="email_details_table",
+                on_select="rerun",
+                selection_mode="single-row",
+            )
+            selected_rows = list(selection.selection.rows)
+            if selected_rows and selected_rows[0] < len(action_details):
+                selected = action_details.iloc[selected_rows[0]]
+                entry_id = selected["outlook_entry_id"]
+                store_id = selected["outlook_store_id"]
+                entry_id = str(entry_id) if pd.notna(entry_id) and entry_id else ""
+                store_id = str(store_id) if pd.notna(store_id) and store_id else None
+                st.caption(f'Selected: {selected["subject"] or "(no subject)"} · {selected["sender_email"]}')
+                open_column, reply_column = st.columns(2)
+                with open_column:
+                    open_message = st.button(
+                        "Open in Outlook",
+                        icon=":material/open_in_new:",
+                        width="stretch",
+                        disabled=not entry_id,
+                    )
+                with reply_column:
+                    reply_message = st.button(
+                        "Reply in Outlook",
+                        icon=":material/reply:",
+                        width="stretch",
+                        disabled=not entry_id,
+                    )
+
+                if not entry_id:
+                    st.warning("Restart the Outlook listener once to enable actions for this existing email.")
+                elif open_message or reply_message:
+                    try:
+                        display_outlook_item(entry_id, store_id, reply=reply_message)
+                    except OutlookDesktopError as error:
+                        st.error(str(error))
+                    else:
+                        st.toast("Reply draft opened in Outlook." if reply_message else "Email opened in Outlook.")
 
     lower_left, lower_right = st.columns(2, gap="large")
     daily_counts = frame.groupby("date", as_index=False).size().rename(columns={"size": "emails"})
@@ -245,17 +430,21 @@ def render_dashboard() -> None:
         with st.container(border=True):
             section_heading("Email Trends Over Time", "Daily Inbox activity based on selected filters")
             chart = px.line(daily_counts, x="date", y="emails", markers=True, color_discrete_sequence=[PURPLE])
-            chart.update_layout(height=325, margin=dict(l=8, r=8, t=4, b=12), showlegend=False, xaxis_title="Date", yaxis_title="Count of emails")
+            chart.update_layout(height=375, margin=dict(l=100, r=35, t=25, b=85), showlegend=False, xaxis_title="Date", yaxis_title="Email count")
             apply_chart_theme(chart)
-            chart.update_traces(line=dict(width=3), marker=dict(size=6))
+            chart.update_traces(line=dict(width=3), marker=dict(size=8))
+            chart.update_xaxes(tickformat="%d %b", nticks=7)
+            chart.update_yaxes(tickformat=",d", nticks=6)
             st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
     with lower_right:
         with st.container(border=True):
             section_heading("Daily Email Volume", "Number of emails received per day")
             latest_days = daily_counts.sort_values("date", ascending=False).head(12).sort_values("date")
             chart = px.bar(latest_days, x="emails", y="date", orientation="h", text="emails", color_discrete_sequence=[PURPLE])
-            chart.update_layout(height=325, margin=dict(l=8, r=10, t=4, b=12), showlegend=False, xaxis_title="Total emails", yaxis_title="Date")
+            chart.update_layout(height=375, margin=dict(l=110, r=60, t=25, b=85), showlegend=False, xaxis_title="Email count", yaxis_title="Date")
             apply_chart_theme(chart)
+            chart.update_traces(texttemplate="%{text:,.0f}", textposition="outside", textfont=dict(color="#FFFFFF", size=15), cliponaxis=False)
+            chart.update_xaxes(tickformat=",d", nticks=6)
             chart.update_yaxes(type="category")
             st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
     st.divider()
@@ -270,7 +459,12 @@ def main() -> None:
         str(settings.database_path),
         getattr(settings, "dashboard_backup_refresh_seconds", 300),
     )
-    render_dashboard()
+    if st.query_params.get("view") == "overview":
+        render_dashboard()
+    else:
+        from email_analytics.advanced_dashboard import render_advanced_dashboard
+
+        render_advanced_dashboard()
 
 
 if __name__ == "__main__":
