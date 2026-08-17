@@ -13,6 +13,7 @@ from .refresh_signal import update_refresh_signal
 
 logger = logging.getLogger(__name__)
 LOCAL_RECEIVED_DATE_SQL = "date(received_at, '+5 hours', '+30 minutes')"
+PRIORITY_RULE_TYPES = {"critical", "high", "normal"}
 
 
 @contextmanager
@@ -58,8 +59,59 @@ def initialize_database(database_path: Path) -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS priority_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                layout_type TEXT NOT NULL DEFAULT 'two' CHECK(layout_type IN ('two', 'three')),
+                rule_type TEXT NOT NULL CHECK(rule_type IN ('critical', 'high', 'normal')),
+                pattern TEXT NOT NULL,
+                normalized_pattern TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(layout_type, rule_type, normalized_pattern)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_priority_rules_type
+                ON priority_rules(rule_type);
             """
         )
+
+        priority_rule_sql_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'priority_rules'"
+        ).fetchone()
+        priority_rule_sql = str(priority_rule_sql_row[0] or "") if priority_rule_sql_row else ""
+        if "critical" not in priority_rule_sql.casefold() or "layout_type" not in priority_rule_sql.casefold():
+            legacy_columns = {row[1] for row in conn.execute("PRAGMA table_info(priority_rules)")}
+            legacy_rows = conn.execute(
+                "SELECT id, rule_type, pattern, normalized_pattern, created_at"
+                + (", layout_type" if "layout_type" in legacy_columns else "")
+                + " FROM priority_rules ORDER BY id"
+            ).fetchall()
+            conn.execute("ALTER TABLE priority_rules RENAME TO priority_rules_legacy")
+            conn.execute(
+                """
+                CREATE TABLE priority_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    layout_type TEXT NOT NULL DEFAULT 'two' CHECK(layout_type IN ('two', 'three')),
+                    rule_type TEXT NOT NULL CHECK(rule_type IN ('critical', 'high', 'normal')),
+                    pattern TEXT NOT NULL,
+                    normalized_pattern TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(layout_type, rule_type, normalized_pattern)
+                )
+                """
+            )
+            for row in legacy_rows:
+                layout_type = str(row["layout_type"]) if "layout_type" in legacy_columns else "two"
+                conn.execute(
+                    """
+                    INSERT INTO priority_rules
+                        (id, layout_type, rule_type, pattern, normalized_pattern, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (row["id"], layout_type, row["rule_type"], row["pattern"], row["normalized_pattern"], row["created_at"]),
+                )
+            conn.execute("DROP TABLE priority_rules_legacy")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_priority_rules_type ON priority_rules(rule_type)")
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(emails)")}
         added_outlook_identifiers = False
@@ -289,3 +341,65 @@ def get_date_bounds(database_path: Path) -> tuple[date, date] | None:
 def count_emails(database_path: Path) -> int:
     with connection(database_path) as conn:
         return int(conn.execute("SELECT count(*) FROM emails").fetchone()[0])
+
+
+def get_priority_rules(
+    database_path: Path,
+    rule_type: str | None = None,
+    layout_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return saved priority rules in the order they were created."""
+    values: list[Any] = []
+    clauses: list[str] = []
+    if rule_type:
+        if rule_type not in PRIORITY_RULE_TYPES:
+            raise ValueError("rule_type must be 'critical', 'high', or 'normal'")
+        clauses.append("rule_type = ?")
+        values.append(rule_type)
+    if layout_type:
+        if layout_type not in {"two", "three"}:
+            raise ValueError("layout_type must be 'two' or 'three'")
+        clauses.append("layout_type = ?")
+        values.append(layout_type)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    with connection(database_path) as conn:
+        rows = conn.execute(
+            "SELECT id, layout_type, rule_type, pattern, created_at FROM priority_rules"
+            f"{where} ORDER BY id",
+            values,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def add_priority_rule(
+    database_path: Path,
+    rule_type: str,
+    pattern: str,
+    layout_type: str = "two",
+) -> bool:
+    """Add a case-insensitive keyword or sender email rule."""
+    if rule_type not in PRIORITY_RULE_TYPES:
+        raise ValueError("rule_type must be 'critical', 'high', or 'normal'")
+    if layout_type not in {"two", "three"}:
+        raise ValueError("layout_type must be 'two' or 'three'")
+    cleaned = " ".join(pattern.split())
+    if not cleaned:
+        return False
+
+    with connection(database_path) as conn:
+        before = conn.total_changes
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO priority_rules
+                (layout_type, rule_type, pattern, normalized_pattern, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (layout_type, rule_type, cleaned, cleaned.casefold(), datetime.now(timezone.utc).isoformat()),
+        )
+        return conn.total_changes > before
+
+
+def delete_priority_rule(database_path: Path, rule_id: int) -> None:
+    with connection(database_path) as conn:
+        conn.execute("DELETE FROM priority_rules WHERE id = ?", (rule_id,))

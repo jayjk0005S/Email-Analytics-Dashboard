@@ -77,7 +77,7 @@ def _render_header() -> None:
             st.markdown(
                 '<div class="advanced-title-line">'
                 '<div class="advanced-dashboard-name">Advanced Email Explorer</div>'
-                '<div class="advanced-dashboard-badge">Dashboard 1 of 2</div>'
+                '<div class="advanced-dashboard-badge">Dashboard 2 of 3</div>'
                 '</div>',
                 unsafe_allow_html=True,
             )

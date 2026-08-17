@@ -108,6 +108,30 @@ st.markdown(
       [data-testid="stSelectboxVirtualDropdown"] [role="option"],
       [data-testid="stSelectboxVirtualDropdown"] [role="option"] *,
       [data-baseweb="calendar"] * {{ color: #172554 !important; }}
+      /* Keep the whole calendar, including its month/year header, on one
+         high-contrast surface. BaseWeb otherwise retains the app's dark
+         header background while the calendar text is forced dark. */
+      [data-baseweb="calendar"],
+      [data-baseweb="calendar"] > div,
+      [data-baseweb="calendar"] > div > div,
+      [data-baseweb="calendar"] div {{
+        background-color: #FFFFFF !important;
+      }}
+      [data-baseweb="calendar"] button {{
+        background-color: #FFFFFF !important;
+        color: #172554 !important;
+        font-size: 1rem !important;
+        font-weight: 650 !important;
+      }}
+      [data-baseweb="calendar"] svg {{
+        color: #3730A3 !important;
+        fill: #3730A3 !important;
+      }}
+      [data-baseweb="calendar"] [role="gridcell"] {{
+        color: #172554 !important;
+        font-size: .98rem !important;
+        font-weight: 600 !important;
+      }}
       [data-baseweb="popover"] [role="option"],
       [data-testid="stSelectboxVirtualDropdown"] [role="option"] {{ background: #FFFFFF !important; }}
       [data-baseweb="popover"] [role="option"]:hover,
@@ -229,7 +253,7 @@ def render_dashboard() -> None:
     with title_column:
         st.markdown(
             '<h1 class="hero-title">Email Analytics Dashboard</h1>'
-            '<p class="hero-copy">Dashboard 2 of 2 · Track Inbox volume, sender activity, and engagement over time.</p>',
+            '<p class="hero-copy">Dashboard 3 of 3 · Track Inbox volume, sender activity, and engagement over time.</p>',
             unsafe_allow_html=True,
         )
     with refresh_column:
@@ -237,7 +261,7 @@ def render_dashboard() -> None:
             st.rerun()
     with next_column:
         if st.button("Next dashboard", icon=":material/arrow_forward:", width="stretch", key="overview_next"):
-            st.query_params.clear()
+            st.query_params["view"] = "priority"
             st.rerun()
     last_sync = get_state(settings.database_path, "last_successful_sync_at")
     connection_state = "Classic Outlook Desktop"
@@ -455,12 +479,27 @@ def main() -> None:
     settings = get_settings()
     session_suffix = str(settings.database_path.resolve())
     st.session_state[f"dashboard_last_full_render:{session_suffix}"] = time.monotonic()
-    watch_for_dashboard_refresh(
-        str(settings.database_path),
-        getattr(settings, "dashboard_backup_refresh_seconds", 300),
-    )
-    if st.query_params.get("view") == "overview":
+    current_view = str(st.query_params.get("view") or "priority")
+    refresh_mode = str(
+        st.query_params.get("refresh_mode")
+        or st.session_state.get("priority_schedule")
+        or "Scheduled"
+    ).title()
+    if current_view != "priority" or refresh_mode != "Manual":
+        backup_refresh_seconds = getattr(settings, "dashboard_backup_refresh_seconds", 300)
+        if current_view == "priority" and refresh_mode == "Live":
+            backup_refresh_seconds = 15
+        watch_for_dashboard_refresh(str(settings.database_path), backup_refresh_seconds)
+    if current_view == "priority":
+        from email_analytics.priority_inbox_dashboard import render_priority_dashboard
+
+        render_priority_dashboard()
+    elif current_view == "overview":
         render_dashboard()
+    elif current_view == "advanced":
+        from email_analytics.advanced_dashboard import render_advanced_dashboard
+
+        render_advanced_dashboard()
     else:
         from email_analytics.advanced_dashboard import render_advanced_dashboard
 
