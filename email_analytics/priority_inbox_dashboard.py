@@ -41,6 +41,7 @@ TEMPLATE_SLUGS = {"Zeta Purple": "zeta", "Ocean Blue": "ocean", "Sunset Coral": 
 REFRESH_MODES = ("Scheduled", "Live", "Manual")
 LAYOUT_OPTIONS = ("2 queues", "3 queues")
 LAYOUT_SLUGS = {"2 queues": "two", "3 queues": "three"}
+DIALOG_STATE_VERSION = 3
 TEMPLATE_STYLES = {
     "Zeta Purple": {
         "page": "radial-gradient(circle at 96% 2%, rgba(226,193,255,.56), transparent 31%), radial-gradient(circle at 3% 0%, rgba(186,207,255,.61), transparent 32%), #F4F6FF",
@@ -65,6 +66,47 @@ TEMPLATE_STYLES = {
 
 def _safe(value: object) -> str:
     return html.escape(str(value), quote=True)
+
+
+def _initialize_dialog_state() -> None:
+    """Keep dialogs closed until this browser session produces a real UI event."""
+    if st.session_state.get("priority_dialog_state_version") != DIALOG_STATE_VERSION:
+        st.session_state["priority_dialog_state_version"] = DIALOG_STATE_VERSION
+        st.session_state["priority_graph_dialog_open"] = False
+        st.session_state["priority_email_dialog_open"] = False
+        st.session_state["priority_email_dialog_id"] = ""
+
+    st.session_state.setdefault("priority_graph_dialog_open", False)
+    st.session_state.setdefault("priority_email_dialog_open", False)
+    st.session_state.setdefault("priority_email_dialog_id", "")
+
+    incoming_popup = str(st.query_params.get("priority_popup") or "")
+    incoming_message_id = str(st.query_params.get("selected_priority_email") or "")
+
+    # Treat the URL as a one-time click event, then remove it immediately so a
+    # refresh or later Streamlit rerun cannot reopen the dialog.
+    if incoming_popup == "email" and incoming_message_id:
+        st.session_state["priority_email_dialog_id"] = incoming_message_id
+        st.session_state["priority_email_dialog_open"] = True
+        st.session_state["priority_graph_dialog_open"] = False
+
+    for parameter in ("priority_popup", "selected_priority_email", "priority_click"):
+        if parameter in st.query_params:
+            del st.query_params[parameter]
+
+
+def _open_graph_dialog() -> None:
+    st.session_state["priority_graph_dialog_open"] = True
+    st.session_state["priority_email_dialog_open"] = False
+
+
+def _close_graph_dialog() -> None:
+    st.session_state["priority_graph_dialog_open"] = False
+
+
+def _close_email_dialog() -> None:
+    st.session_state["priority_email_dialog_open"] = False
+    st.session_state["priority_email_dialog_id"] = ""
 
 
 def _initialize_header_preferences() -> None:
@@ -614,12 +656,8 @@ def _queue_markup(
                 f"&layout={quote(LAYOUT_SLUGS.get(layout_mode, 'two'), safe='')}"
             )
             selection_url = (
-                f"?view=priority{preference_query}"
-                if selected_class
-                else (
-                    f"?view=priority&selected_priority_email={quote(message_id, safe='')}"
-                    f"&priority_popup=email{preference_query}"
-                )
+                f"?view=priority&selected_priority_email={quote(message_id, safe='')}"
+                f"&priority_popup=email{preference_query}"
             )
             sender = _safe(row["Sender"])
             email = _safe(row["Email"])
@@ -809,7 +847,7 @@ def _render_selected_email(selected: pd.Series) -> None:
             )
         with close_col:
             close_selection = st.button(
-                "Close",
+                "Close email",
                 icon=":material/close:",
                 width="stretch",
                 key="priority_close_selection",
@@ -880,11 +918,8 @@ def _render_selected_email(selected: pd.Series) -> None:
             )
 
         if close_selection:
-            if "selected_priority_email" in st.query_params:
-                del st.query_params["selected_priority_email"]
-            if "priority_popup" in st.query_params:
-                del st.query_params["priority_popup"]
-            st.rerun()
+            _close_email_dialog()
+            st.rerun(scope="app")
         if entry_id and (open_message or reply_message):
             try:
                 display_outlook_item(entry_id, store_id, reply=reply_message)
@@ -1041,12 +1076,17 @@ def _render_graphs(
 
 @st.dialog("Email details", width="large")
 def _show_email_dialog(selected: pd.Series) -> None:
+    if not st.session_state.get("priority_email_dialog_open", False):
+        st.rerun(scope="app")
     _render_selected_email(selected)
 
 
 @st.dialog("Priority graph previews", width="large")
 def _show_graph_dialog(frame: pd.DataFrame, three_queue_layout: bool) -> None:
-    copy_col, close_col = st.columns([5, 1], vertical_alignment="center")
+    if not st.session_state.get("priority_graph_dialog_open", False):
+        st.rerun(scope="app")
+
+    copy_col, close_col = st.columns([4, 1.4], vertical_alignment="center")
     with copy_col:
         st.markdown(
             '<p class="priority-section-copy">Colorful previews for the messages currently included by your filters.</p>',
@@ -1054,20 +1094,20 @@ def _show_graph_dialog(frame: pd.DataFrame, three_queue_layout: bool) -> None:
         )
     with close_col:
         if st.button(
-            "Close graphs",
+            "Close popup",
             icon=":material/close:",
             width="stretch",
             key="priority_graph_dialog_close",
         ):
-            st.rerun()
+            _close_graph_dialog()
+            st.rerun(scope="app")
     _render_graphs(frame, show_heading=False, three_queue_layout=three_queue_layout)
 
 
 def render_priority_dashboard() -> None:
     settings = get_settings()
     initialize_database(settings.database_path)
-    if st.query_params.get("priority_popup") == "graphs":
-        del st.query_params["priority_popup"]
+    _initialize_dialog_state()
     _initialize_header_preferences()
     _install_styles()
     _install_template_styles(str(st.session_state.get("priority_template") or "Zeta Purple"))
@@ -1101,11 +1141,12 @@ def render_priority_dashboard() -> None:
             else:
                 selected_dates = st.date_input("Date range", value=date.today(), key="priority_dates")
         with graph_col:
-            open_graph_dialog = st.button(
+            st.button(
                 "View graphs",
                 icon=":material/insert_chart:",
                 width="stretch",
                 key="priority_graph_toggle",
+                on_click=_open_graph_dialog,
             )
 
     start_date = end_date = None
@@ -1127,7 +1168,7 @@ def render_priority_dashboard() -> None:
         ]
 
     frame = _classify(records, rules, three_queue_layout=three_queue_layout)
-    selected_message_id = str(st.query_params.get("selected_priority_email") or "")
+    selected_message_id = str(st.session_state.get("priority_email_dialog_id") or "")
     template_name = str(st.session_state.get("priority_template") or "Zeta Purple")
     refresh_mode = str(st.session_state.get("priority_schedule") or "Scheduled")
     critical_frame = frame[frame["Priority"] == "Critical"].reset_index(drop=True) if not frame.empty else frame.copy()
@@ -1183,15 +1224,15 @@ def render_priority_dashboard() -> None:
                 unsafe_allow_html=True,
             )
 
-    if selected_message_id and not open_graph_dialog:
+    if st.session_state.get("priority_email_dialog_open", False) and selected_message_id and not st.session_state.get("priority_graph_dialog_open", False):
         selected_rows = frame[frame["MessageId"].fillna("").astype(str) == selected_message_id]
         if not selected_rows.empty:
             _show_email_dialog(selected_rows.iloc[0])
         else:
             st.warning("The selected email is outside the current filters. Clear the selection or adjust the filters.")
             if st.button("Clear selected email", icon=":material/close:", key="priority_clear_missing_selection"):
-                del st.query_params["selected_priority_email"]
-                st.rerun()
+                _close_email_dialog()
+                st.rerun(scope="app")
 
     _render_rule_controls(
         settings.database_path,
@@ -1199,7 +1240,7 @@ def render_priority_dashboard() -> None:
         three_queue_layout=three_queue_layout,
     )
 
-    if open_graph_dialog:
+    if st.session_state.get("priority_graph_dialog_open", False):
         _show_graph_dialog(frame, three_queue_layout)
 
     if total_in_database == 0:
