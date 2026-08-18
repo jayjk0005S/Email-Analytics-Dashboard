@@ -1,10 +1,21 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from email_analytics.outlook_desktop import (
+    _as_utc,
     display_outlook_item,
     get_outlook_item_details,
     outlook_item_to_message,
 )
+
+
+def test_outlook_wall_clock_time_uses_the_computers_local_timezone():
+    # PyWin32 may attach a misleading zone to Outlook's local wall time.  The
+    # expected value deliberately uses the host timezone, so this test is
+    # portable to computers outside India.
+    outlook_time = datetime(2026, 8, 18, 19, 56, 35, tzinfo=timezone.utc)
+    expected = outlook_time.replace(tzinfo=None).astimezone(timezone.utc).isoformat()
+
+    assert _as_utc(outlook_time) == expected
 
 
 class Attachments:

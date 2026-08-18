@@ -50,6 +50,9 @@ def test_upsert_is_idempotent_and_filters_data(tmp_path):
     assert filtered[0]["outlook_entry_id"] == "entry-one"
     assert filtered[0]["outlook_store_id"] == "store-one"
     assert filtered[0]["is_read"] == 1
+    corrected = message("one", "one@example.com", "2026-08-01T07:30:00Z")
+    upsert_emails(db_path, [corrected])
+    assert get_dashboard_data(db_path, sender_email="one@example.com")[0]["received_at"] == "2026-08-01T07:30:00Z"
     targets = get_outlook_status_targets(db_path)
     assert [target["message_id"] for target in targets] == ["two", "one"]
     revision_before_status_change = read_refresh_signal(db_path)

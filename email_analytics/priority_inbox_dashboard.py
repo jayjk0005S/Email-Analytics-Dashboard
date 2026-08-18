@@ -330,6 +330,16 @@ def _install_styles() -> None:
           .priority-rule-chip.high { background: #FFF4F4; border-color: #FFD0D0; color: #A61F1F !important; }
           .priority-rule-chip.critical { background: #FFF0F4; border-color: #FFB8CA; color: #A30F35 !important; }
           .priority-rule-chip.normal { background: #F1F6FF; border-color: #CBDAFC; color: #2254A4 !important; }
+          .priority-rule-preview-group { margin: .35rem 0 .8rem; }
+          .priority-rule-preview-label { color: #526187 !important; font-size: .72rem; font-weight: 850; letter-spacing: .06em; margin-bottom: .38rem; text-transform: uppercase; }
+          .priority-rule-preview-items { display: flex; flex-wrap: wrap; gap: .42rem; }
+          [class*="st-key-priority_rule_item_"] {
+            background: #F8FAFF; border: 1px solid #E0E6F6; border-radius: 12px;
+            margin-top: .45rem; padding: .35rem .38rem .2rem;
+          }
+          [class*="st-key-priority_rule_item_"] .priority-rule-chip {
+            max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          }
 
           .st-key-priority_selected_email {
             background: rgba(255,255,255,.88) !important; border: 1px solid #CDD7F1 !important;
@@ -688,19 +698,45 @@ def _show_rules(database_path, rules: list[dict[str, Any]], rule_type: str) -> N
     if not selected:
         st.caption("No rules added yet.")
         return
-    st.markdown('<div class="priority-rule-list-label">Active rules</div>', unsafe_allow_html=True)
+
+    label = "High Priority" if rule_type == "high" else rule_type.title()
+    st.markdown(
+        f'<div class="priority-rule-list-label">Active rules · {len(selected)}</div>',
+        unsafe_allow_html=True,
+    )
     chip_class = rule_type
-    for rule in selected:
-        label_col, delete_col = st.columns([8, 1], vertical_alignment="center")
-        with label_col:
+    email_rules = [rule for rule in selected if "@" in str(rule["pattern"])]
+    word_rules = [rule for rule in selected if "@" not in str(rule["pattern"])]
+    with st.popover(
+        f"Preview {label} rules",
+        icon=":material/visibility:",
+        width="stretch",
+    ):
+        st.caption("The dashboard searches these saved values without case sensitivity.")
+        for group_label, group_rules in (("Email addresses", email_rules), ("Words and phrases", word_rules)):
             st.markdown(
-                f'<span class="priority-rule-chip {chip_class}">{_safe(rule["pattern"])}</span>',
+                f'<div class="priority-rule-preview-label">{group_label}</div>',
                 unsafe_allow_html=True,
             )
-        with delete_col:
-            if st.button("×", key=f"priority_rule_delete_{rule['id']}", help="Remove this rule"):
-                delete_priority_rule(database_path, int(rule["id"]))
-                st.rerun()
+            if not group_rules:
+                st.caption("None saved")
+                continue
+            for offset in range(0, len(group_rules), 4):
+                row_rules = group_rules[offset : offset + 4]
+                columns = st.columns(len(row_rules), gap="small")
+                for column, rule in zip(columns, row_rules):
+                    with column:
+                        with st.container(key=f"priority_rule_item_{rule['id']}"):
+                            label_col, delete_col = st.columns([5, 1], vertical_alignment="center", gap="small")
+                            with label_col:
+                                st.markdown(
+                                    f'<span class="priority-rule-chip {chip_class}" title="{_safe(rule["pattern"])}">{_safe(rule["pattern"])}</span>',
+                                    unsafe_allow_html=True,
+                                )
+                            with delete_col:
+                                if st.button("×", key=f"priority_rule_delete_{rule['id']}", help="Remove this rule"):
+                                    delete_priority_rule(database_path, int(rule["id"]))
+                                    st.rerun()
 
 
 def _render_rule_card(

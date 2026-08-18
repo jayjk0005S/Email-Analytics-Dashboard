@@ -192,6 +192,7 @@ def upsert_emails(database_path: Path, messages: Iterable[dict[str, Any]]) -> in
                 sender_name = excluded.sender_name,
                 sender_email = excluded.sender_email,
                 subject = excluded.subject,
+                received_at = excluded.received_at,
                 body_preview = excluded.body_preview,
                 has_attachments = excluded.has_attachments,
                 is_read = excluded.is_read,

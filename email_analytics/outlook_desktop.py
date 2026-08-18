@@ -77,9 +77,11 @@ def inbox_folder():
 
 
 def _as_utc(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.astimezone()
-    return value.astimezone(timezone.utc).isoformat()
+    # Outlook's COM DATE values are local wall-clock times.  PyWin32 can attach
+    # a misleading tzinfo.  Discard only that COM tag, then let the operating
+    # system apply its own configured local timezone before storing UTC.
+    local_wall_time = value.replace(tzinfo=None)
+    return local_wall_time.astimezone(timezone.utc).isoformat()
 
 
 def _sender_email(item: Any) -> str:
