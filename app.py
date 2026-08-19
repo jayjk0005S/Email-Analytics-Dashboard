@@ -265,7 +265,9 @@ def render_dashboard() -> None:
             st.rerun()
     last_sync = get_state(settings.database_path, "last_successful_sync_at")
     connection_state = "Classic Outlook Desktop"
-    privacy_state = "Body previews stored" if settings.store_body_preview else "Metadata-only storage"
+    privacy_state = "Full bodies stored for sorting" if settings.mail_source == "outlook_desktop" else (
+        "Body previews stored" if settings.store_body_preview else "Metadata-only storage"
+    )
     connection_color = "#17a36b" if mail_source == "outlook_desktop" else "#a35f00"
     st.markdown(
         '<div class="status-ribbon">'

@@ -8,6 +8,7 @@ from email_analytics.database import (
     get_senders,
     initialize_database,
     update_read_statuses,
+    update_email_bodies,
     upsert_emails,
 )
 from email_analytics.refresh_signal import read_refresh_signal, refresh_signal_path
@@ -60,6 +61,8 @@ def test_upsert_is_idempotent_and_filters_data(tmp_path):
     assert read_refresh_signal(db_path) != revision_before_status_change
     assert get_dashboard_data(db_path, sender_email="two@example.com")[0]["is_read"] == 1
     assert update_read_statuses(db_path, [("two", True)]) == 0
+    assert update_email_bodies(db_path, {"one": "Full Outlook body"}) == 1
+    assert get_dashboard_data(db_path, sender_email="one@example.com")[0]["body_preview"] == "Full Outlook body"
 
 
 def test_date_filters_use_the_dashboard_timezone(tmp_path):

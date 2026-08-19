@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from email_analytics.outlook_desktop import (
     _as_utc,
     display_outlook_item,
+    get_outlook_item_bodies,
     get_outlook_item_details,
     outlook_item_to_message,
 )
@@ -42,7 +43,7 @@ class DemoMailItem:
     Body = "Private email body that should not be stored in metadata mode."
 
 
-def test_outlook_item_becomes_a_duplicate_safe_metadata_record():
+def test_outlook_item_stores_full_body_for_priority_rules():
     message = outlook_item_to_message(DemoMailItem(), store_body_preview=False)
     assert message is not None
     assert message["id"] == "outlook:<desktop-outlook@example.com>"
@@ -50,7 +51,7 @@ def test_outlook_item_becomes_a_duplicate_safe_metadata_record():
     assert message["hasAttachments"] is True
     assert message["isRead"] is False
     assert message["importance"] == "high"
-    assert message["bodyPreview"] == ""
+    assert message["bodyPreview"] == "Private email body that should not be stored in metadata mode."
     assert message["outlookEntryId"] == "fallback-entry-id"
     assert message["outlookStoreId"] == "default-store-id"
 
@@ -168,3 +169,53 @@ def test_get_outlook_item_details_reads_live_message_without_saving_it(monkeypat
     assert details["importance"] == "high"
     assert details["attachments"] == [{"name": "report.xlsx", "size": 2048}]
     assert details["body_preview"] == "Live Outlook message body"
+
+
+def test_get_outlook_item_bodies_uses_one_com_session_and_skips_missing_items(monkeypatch):
+    requested: list[tuple[str, str | None]] = []
+
+    class MailItem:
+        def __init__(self, body: str):
+            self.Body = body
+
+    class Namespace:
+        def GetItemFromID(self, entry_id: str, store_id: str | None = None):
+            requested.append((entry_id, store_id))
+            if entry_id == "missing-entry":
+                raise RuntimeError("Message moved")
+            return MailItem(f"Full body for {entry_id}")
+
+    class Application:
+        def GetNamespace(self, name: str):
+            assert name == "MAPI"
+            return Namespace()
+
+    dispatches: list[str] = []
+
+    def dispatch(name: str):
+        dispatches.append(name)
+        return Application()
+
+    monkeypatch.setattr("email_analytics.outlook_desktop.win32com.client.Dispatch", dispatch)
+    monkeypatch.setattr("email_analytics.outlook_desktop.pythoncom.CoInitialize", lambda: None)
+    monkeypatch.setattr("email_analytics.outlook_desktop.pythoncom.CoUninitialize", lambda: None)
+
+    bodies = get_outlook_item_bodies(
+        [
+            {"message_id": "one", "outlook_entry_id": "entry-one", "outlook_store_id": "store-one"},
+            {"message_id": "two", "outlook_entry_id": "entry-two", "outlook_store_id": ""},
+            {"message_id": "missing", "outlook_entry_id": "missing-entry", "outlook_store_id": "store-one"},
+            {"message_id": "no-outlook-id", "outlook_entry_id": ""},
+        ]
+    )
+
+    assert dispatches == ["Outlook.Application"]
+    assert requested == [
+        ("entry-one", "store-one"),
+        ("entry-two", None),
+        ("missing-entry", "store-one"),
+    ]
+    assert bodies == {
+        "one": "Full body for entry-one",
+        "two": "Full body for entry-two",
+    }

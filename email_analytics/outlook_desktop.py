@@ -117,12 +117,10 @@ def outlook_item_to_message(item: Any, store_body_preview: bool) -> dict[str, An
         store_id = str(item.Parent.StoreID or "")
     except Exception:
         store_id = ""
-    preview = ""
-    if store_body_preview:
-        try:
-            preview = str(item.Body or "")[:1000]
-        except Exception:
-            preview = ""
+    try:
+        preview = str(item.Body or "")
+    except Exception:
+        preview = ""
     return {
         "id": f"outlook:{stable_id}",
         "from": {
@@ -214,6 +212,46 @@ def get_outlook_item_details(entry_id: str, store_id: str | None = None) -> dict
     except Exception as error:
         raise OutlookDesktopError(
             "Could not load this message from Outlook. It may have been moved or deleted."
+        ) from error
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def get_outlook_item_bodies(records: list[dict[str, Any]]) -> dict[str, str]:
+    """Read full message bodies from Outlook for rule matching without storing them."""
+    targets = [
+        (
+            str(record.get("message_id") or ""),
+            str(record.get("outlook_entry_id") or ""),
+            str(record.get("outlook_store_id") or ""),
+        )
+        for record in records
+        if record.get("message_id") and record.get("outlook_entry_id")
+    ]
+    if not targets:
+        return {}
+
+    pythoncom.CoInitialize()
+    try:
+        application = win32com.client.Dispatch("Outlook.Application")
+        namespace = application.GetNamespace("MAPI")
+        bodies: dict[str, str] = {}
+        for message_id, entry_id, store_id in targets:
+            try:
+                item = (
+                    namespace.GetItemFromID(entry_id, store_id)
+                    if store_id
+                    else namespace.GetItemFromID(entry_id)
+                )
+                bodies[message_id] = str(getattr(item, "Body", "") or "")
+            except Exception:
+                # A moved or deleted item must not prevent the remaining
+                # visible messages from being classified.
+                continue
+        return bodies
+    except Exception as error:
+        raise OutlookDesktopError(
+            "Could not read email bodies from Classic Outlook for priority sorting."
         ) from error
     finally:
         pythoncom.CoUninitialize()

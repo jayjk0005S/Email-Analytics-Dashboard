@@ -20,9 +20,15 @@ from .database import (
     get_priority_rules,
     get_state,
     initialize_database,
+    update_email_bodies,
 )
 from .mail_sync import sync_mail
-from .outlook_desktop import OutlookDesktopError, display_outlook_item, get_outlook_item_details
+from .outlook_desktop import (
+    OutlookDesktopError,
+    display_outlook_item,
+    get_outlook_item_bodies,
+    get_outlook_item_details,
+)
 
 
 ZETA_LOGO_PATH = PROJECT_ROOT / "assets" / "zeta-logo-primary.svg"
@@ -464,13 +470,22 @@ def _install_template_styles(template_name: str) -> None:
 
 def _rule_matches(pattern: str, record: dict[str, Any]) -> bool:
     needle = pattern.casefold()
-    if "@" in needle:
-        return needle in str(record.get("sender_email") or "").casefold()
     searchable = " ".join(
         str(record.get(field) or "")
         for field in ("sender_name", "sender_email", "subject", "body_preview")
     ).casefold()
     return needle in searchable
+
+
+def _store_missing_rule_bodies(database_path, records: list[dict[str, Any]]) -> None:
+    """Read missing Outlook bodies once and retain them for future rule checks."""
+    missing = [record for record in records if not record.get("body_preview")]
+    bodies = get_outlook_item_bodies(missing)
+    update_email_bodies(database_path, bodies)
+    for record in records:
+        body = bodies.get(str(record.get("message_id") or ""))
+        if body is not None:
+            record["body_preview"] = body
 
 
 def _classify(
@@ -491,10 +506,10 @@ def _classify(
             priority, reason = "Critical", f"Critical rule: {matched_critical}"
         elif matched_high:
             priority, reason = "High Priority", f"High rule: {matched_high}"
-        elif str(record.get("importance") or "").casefold() == "high":
-            priority, reason = "High Priority", "Outlook marked high"
         elif matched_normal:
             priority, reason = "Normal", f"Normal rule: {matched_normal}"
+        elif str(record.get("importance") or "").casefold() == "high":
+            priority, reason = "High Priority", "Outlook marked high"
         else:
             priority, reason = "Normal", "Default inbox"
 
@@ -780,13 +795,14 @@ def _render_rule_controls(
 ) -> None:
     layout_type = "three" if three_queue_layout else "two"
     precedence_copy = (
-        "Critical rules take precedence, followed by High Priority and Normal. Rules are saved only for this three-queue layout."
+        "Critical rules take precedence, followed by High Priority and Normal. Rules are shared across both layouts."
         if three_queue_layout
-        else "High Priority rules take precedence over Normal. Rules are saved only for this two-queue layout."
+        else "High Priority rules take precedence over Normal. Rules are shared across both layouts."
     )
     st.markdown(
         '<div class="priority-section-heading">Automatic sorting rules</div>'
-        f'<p class="priority-section-copy">Add a keyword, phrase, or sender email. {_safe(precedence_copy)}</p>',
+        '<p class="priority-section-copy">Add a keyword, phrase, or sender email. Rules check the sender, subject, '
+        f'and full email body read live from Outlook. {_safe(precedence_copy)}</p>',
         unsafe_allow_html=True,
     )
     cards = []
@@ -1150,7 +1166,7 @@ def render_priority_dashboard() -> None:
     layout_mode = str(st.session_state.get("priority_layout") or "2 queues")
     three_queue_layout = layout_mode == "3 queues"
     layout_type = "three" if three_queue_layout else "two"
-    rules = get_priority_rules(settings.database_path, layout_type=layout_type)
+    rules = get_priority_rules(settings.database_path)
     total_in_database = count_emails(settings.database_path)
     _render_header(get_state(settings.database_path, "last_successful_sync_at"))
     refresh_notice = st.session_state.pop("priority_refresh_notice", None)
@@ -1202,6 +1218,12 @@ def render_priority_dashboard() -> None:
             record for record in records
             if needle in " ".join(str(record.get(field) or "") for field in ("sender_name", "sender_email", "subject", "body_preview")).casefold()
         ]
+
+    if rules and records:
+        try:
+            _store_missing_rule_bodies(settings.database_path, records)
+        except OutlookDesktopError as error:
+            st.warning(str(error))
 
     frame = _classify(records, rules, three_queue_layout=three_queue_layout)
     selected_message_id = str(st.session_state.get("priority_email_dialog_id") or "")
@@ -1281,7 +1303,7 @@ def render_priority_dashboard() -> None:
 
     if total_in_database == 0:
         st.info("Your local database is empty. Start the Outlook listener or seed demo data to populate this dashboard.")
-    st.caption(f"Local database: `{settings.database_path}` · Rules are isolated to the active {layout_mode} layout.")
+    st.caption(f"Local database: `{settings.database_path}` · Rules are shared across both queue layouts.")
 
 
 __all__ = ["render_priority_dashboard"]

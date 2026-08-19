@@ -303,6 +303,22 @@ def update_read_statuses(database_path: Path, statuses: Iterable[tuple[str, bool
     return changed
 
 
+def update_email_bodies(database_path: Path, bodies: dict[str, str]) -> int:
+    """Store full Outlook body text for existing messages."""
+    if not bodies:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    rows = [(body, now, message_id, body) for message_id, body in bodies.items()]
+    with connection(database_path) as conn:
+        before = conn.total_changes
+        conn.executemany(
+            "UPDATE emails SET body_preview = ?, synced_at = ? "
+            "WHERE graph_message_id = ? AND body_preview <> ?",
+            rows,
+        )
+        return conn.total_changes - before
+
+
 def get_senders(
     database_path: Path,
     start_date: date | None = None,
